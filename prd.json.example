@@ -1,0 +1,90 @@
+{
+  "projectName": "Landing Page with Waitlist",
+  "branchName": "ralph/landing-page",
+  "description": "A simple landing page with email waitlist signup for launching a new product",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Create hero section with headline and CTA",
+      "priority": 1,
+      "description": "Build the hero section of the landing page with a compelling headline, subheadline, and call-to-action button that scrolls to the signup form.",
+      "acceptanceCriteria": [
+        "Hero section is full viewport height",
+        "Headline is large and readable",
+        "Subheadline explains the value prop",
+        "CTA button scrolls smoothly to signup form",
+        "Responsive on mobile"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-002",
+      "title": "Add email signup form with validation",
+      "priority": 2,
+      "description": "Create an email signup form that validates the email format and shows success/error states.",
+      "acceptanceCriteria": [
+        "Email input with placeholder text",
+        "Submit button with loading state",
+        "Client-side email validation",
+        "Error message for invalid email",
+        "Success message after submission",
+        "Form is accessible (labels, aria)"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "Create API endpoint to store emails",
+      "priority": 3,
+      "description": "Build a simple API endpoint that receives email signups and stores them. Can use a JSON file, SQLite, or any simple storage.",
+      "acceptanceCriteria": [
+        "POST /api/waitlist accepts { email: string }",
+        "Returns 200 on success with { success: true }",
+        "Returns 400 for invalid email",
+        "Returns 409 if email already exists",
+        "Emails are persisted to storage"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "Connect form to API endpoint",
+      "priority": 4,
+      "description": "Wire up the frontend form to call the API endpoint and handle all response states.",
+      "acceptanceCriteria": [
+        "Form submits to API on button click",
+        "Loading spinner shows during request",
+        "Success state shows 'You're on the list!'",
+        "Error state shows appropriate message",
+        "Form resets after successful submission"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "Add features/benefits section",
+      "priority": 5,
+      "description": "Create a section below the hero that highlights 3 key features or benefits of the product.",
+      "acceptanceCriteria": [
+        "3 feature cards in a row (stacked on mobile)",
+        "Each card has icon, title, and description",
+        "Consistent spacing and alignment",
+        "Matches overall page styling"
+      ],
+      "passes": false
+    },
+    {
+      "id": "US-006",
+      "title": "Add footer with social links",
+      "priority": 6,
+      "description": "Create a simple footer with copyright and social media icon links.",
+      "acceptanceCriteria": [
+        "Copyright text with current year",
+        "Twitter/X and GitHub icon links",
+        "Links open in new tab",
+        "Footer sticks to bottom on short pages"
+      ],
+      "passes": false
+    }
+  ]
+}

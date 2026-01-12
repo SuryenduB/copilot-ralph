@@ -1,0 +1,23 @@
+# Ralph runtime files (user-specific, not for repo)
+prd.json
+progress.txt
+.ralph-last-branch
+archive/
+
+# OS
+.DS_Store
+Thumbs.db
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
