@@ -1,27 +1,96 @@
 <#
 .SYNOPSIS
-    Ralph for GitHub Copilot CLI
-    Autonomous AI agent loop that runs Copilot CLI until all PRD items are complete.
-    Implements stricter state handling, deterministic story selection, and progress persistence.
+    Orchestrates an autonomous AI agent loop to complete Product Requirements Document (PRD) items using various coding CLI tools.
+
+.DESCRIPTION
+    Ralph is an autonomous agent script that iteratively executes coding tasks defined in a PRD until all items are marked as complete.
+    It supports multiple backends, including GitHub Copilot CLI, OpenCode, Gemini, and Qwen. The script implements deterministic
+    story selection based on priority, manages state persistence via progress logs, and automatically archives progress when
+    switching Git branches. It requires 'prd.json' and 'prompt.md' in the script's root directory.
+
+.PARAMETER Coding
+    Specifies the CLI tool to use for code generation. Valid values are 'Copilot', 'OpenCode', 'Gemini', or 'Qwen'.
+    The default value is 'Copilot'.
+
+.PARAMETER Model
+    Specifies the model identifier to be passed to the CLI tool. Valid values are 'Gemini', 'Qwen', 'OpenCode', or 'Copilot'.
+    The default value is 'Copilot'.
+
+.PARAMETER MaxIterations
+    Specifies the maximum number of iterations the agent loop will run before stopping.
+    The default value is 10.
+
+.EXAMPLE
+    .\Ralph.ps1
+    Runs the agent using default settings (Copilot tool, Copilot model, 10 iterations).
+
+.EXAMPLE
+    .\Ralph.ps1 -Coding Gemini -Model Qwen -MaxIterations 20
+    Runs the agent using the Gemini CLI tool with the Qwen model, allowing up to 20 iterations.
+
+.INPUTS
+    None. You cannot pipe objects to this script.
+
+.OUTPUTS
+    None. The script generates a progress log (progress.txt) and updates the PRD file, but does not output objects to the pipeline.
+
+.NOTES
+    Prerequisites:
+    - Selected Coding CLI must be installed and available in the system PATH.
+    - 'prd.json' and 'prompt.md' must exist in the same directory as the script.
 #>
 
+[CmdletBinding()]
 param(
+    [Parameter(Mandatory=$false)]
+    [ValidateSet('Copilot','OpenCode','Gemini','Qwen')]
+    [string]$Coding = 'Copilot',
+
+    [Parameter(Mandatory=$false)]
+
+    [string]$Model = 'Copilot',
+
     [int]$MaxIterations = 10
 )
 
-$ErrorActionPreference = 'Stop'
+ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
-$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
-$PrdFile = Join-Path $ScriptDir 'prd.json'
-$ProgressFile = Join-Path $ScriptDir 'progress.txt'
-$ArchiveDir = Join-Path $ScriptDir 'archive'
-$LastBranchFile = Join-Path $ScriptDir '.ralph-last-branch'
-$PromptFile = Join-Path $ScriptDir 'prompt.md' 
+# Set Yolo default according to selected model (enabled for Gemini, Qwen, Copilot)
+ $Yolo = if ($Model -in @('Gemini','Qwen','Copilot')) { $true } else { $false }
+
+ $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+ $PrdFile = Join-Path $ScriptDir 'prd.json'
+ $ProgressFile = Join-Path $ScriptDir 'progress.txt'
+ $ArchiveDir = Join-Path $ScriptDir 'archive'
+ $LastBranchFile = Join-Path $ScriptDir '.ralph-last-branch'
+ $PromptFile = Join-Path $ScriptDir 'prompt.md' 
 
 # --- Preconditions ---
-if (-not (Get-Command copilot -ErrorAction SilentlyContinue)) {
-    throw 'GitHub Copilot CLI not installed. npm install -g @github/copilot'
+switch ($Coding) {
+    'OpenCode' {
+        if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+            throw 'OpenCode CLI not installed. Please install opencode and ensure it is on PATH.'
+        }
+    }
+    'Copilot' {
+        if (-not (Get-Command copilot -ErrorAction SilentlyContinue)) {
+            throw 'GitHub Copilot CLI not installed. npm install -g @github/copilot'
+        }
+    }
+    'Gemini' {
+        if (-not (Get-Command gemini -ErrorAction SilentlyContinue)) {
+            throw 'Gemini CLI not installed. Please install gemini and ensure it is on PATH.'
+        }
+    }
+    'Qwen' {
+        if (-not (Get-Command qwen -ErrorAction SilentlyContinue)) {
+            throw 'Qwen CLI not installed. Please install qwen and ensure it is on PATH.'
+        }
+    }
+    Default {
+        throw "Unsupported coding tool: $Coding"
+    }
 }
 
 if (-not (Test-Path $PrdFile)) {
@@ -54,7 +123,7 @@ function Get-IncompleteStories {
         Sort-Object @{ Expression = { if ($null -ne $_.priority) { $_.priority } else { 999 } } }, id
 } 
 
-function Count-Remaining {
+function Get-RemainingCount {
     (Get-IncompleteStories).Count
 }
 
@@ -69,6 +138,58 @@ function Get-CurrentStory {
         }
     } else {
         'none'
+    }
+}
+
+# Build CLI args for Copilot/Gemini/Qwen style CLIs
+function Build-CliArgs {
+    param(
+        [Parameter(Mandatory=$true)][string]$Prompt
+    )
+    $args = @('-p', $Prompt)
+    if ($Model) { $args += "--model=$Model" }
+    if ($Yolo -and ($Model -in @('Gemini','Qwen','Copilot'))) { $args += '--yolo' }
+    return $args
+}
+
+# Invoke a native CLI tool using the call operator (&). Handles OpenCode specially.
+function Invoke-CodingTool {
+    param(
+        [Parameter(Mandatory=$true)][string]$Tool,
+        [Parameter(Mandatory=$true)][string]$Prompt
+    )
+
+    # Map tool logical names to executable names (case-insensitive)
+    $exe = switch ($Tool) {
+        'Copilot' { 'copilot' }
+        'OpenCode' { 'opencode' }
+        'Gemini' { 'gemini' }
+        'Qwen' { 'qwen' }
+        Default { $Tool }
+    }
+
+    if ($Tool -eq 'OpenCode') {
+        $output = & $exe run $Prompt 2>&1
+        $exitCode = $LASTEXITCODE
+        # Write each output line to host and progress log for traceability
+        foreach ($line in $output) {
+            if ($line -ne '') { Write-Host "[$Tool] $line" -ForegroundColor Cyan }
+            Write-Log "[$Tool] $line"
+        }
+        if ($exitCode -ne 0) {
+            Write-Log "OpenCode exit code: $exitCode"
+            throw "OpenCode failed with exit code $exitCode"
+        }
+        return ,$output
+    } else {
+        $args = Build-CliArgs -Prompt $Prompt
+        # Use the call operator to invoke the native CLI with the assembled args
+        $output = & $exe @args 2>&1
+        foreach ($line in $output) {
+            if ($line -ne '') { Write-Host "[$Tool] $line" -ForegroundColor Cyan }
+            Write-Log "[$Tool] $line"
+        }
+        return ,$output
     }
 }
 
@@ -116,12 +237,13 @@ if (-not (Test-Path $ProgressFile)) {
 
 Write-Host "Ralph for GitHub Copilot CLI" -ForegroundColor Cyan
 Write-Host "Max iterations: $MaxIterations" -ForegroundColor Yellow
-Write-Host "Remaining stories: $(Count-Remaining)" -ForegroundColor Yellow
+Write-Host "Remaining stories: $(Get-RemainingCount)" -ForegroundColor Yellow
+Write-Host "Coding tool: $Coding, Model: $Model (Yolo: $Yolo)" -ForegroundColor Green
 
 # --- Main Loop ---
 for ($i = 1; $i -le $MaxIterations; $i++) {
 
-    $remaining = Count-Remaining
+    $remaining = Get-RemainingCount
     if ($remaining -eq 0) {
         Write-Log 'All stories completed.'
         exit 0
@@ -136,7 +258,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     $prompt = Get-Content $PromptFile -Raw
 
     try {
-        $output = & copilot -p $prompt --allow-all-tools 2>&1
+        $output = Invoke-CodingTool -Tool $Coding -Prompt $prompt
         $outStr = $output -join "`n"
     } catch {
         $outStr = $_.Exception.Message
