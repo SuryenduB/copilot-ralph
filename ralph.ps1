@@ -13,8 +13,7 @@
     The default value is 'Copilot'.
 
 .PARAMETER Model
-    Specifies the model identifier to be passed to the CLI tool. Valid values are 'Gemini', 'Qwen', 'OpenCode', or 'Copilot'.
-    The default value is 'Copilot'.
+    Specifies the model identifier to be passed to the CLI tool.
 
 .PARAMETER MaxIterations
     Specifies the maximum number of iterations the agent loop will run before stopping.
@@ -47,8 +46,7 @@ param(
     [string]$Coding = 'Copilot',
 
     [Parameter(Mandatory=$false)]
-
-    [string]$Model = 'Copilot',
+    [string]$Model,
 
     [int]$MaxIterations = 10
 )
@@ -57,7 +55,7 @@ param(
 Set-StrictMode -Version Latest
 
 # Set Yolo default according to selected model (enabled for Gemini, Qwen, Copilot)
- $Yolo = if ($Model -in @('Gemini','Qwen','Copilot')) { $true } else { $false }
+ $Yolo = if ($Coding -in @('Gemini','Qwen','Copilot')) { $true } else { $false }
 
  $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
  $PrdFile = Join-Path $ScriptDir 'prd.json'
@@ -124,7 +122,7 @@ function Get-IncompleteStories {
 } 
 
 function Get-RemainingCount {
-    (Get-IncompleteStories).Count
+    @(Get-IncompleteStories).Count
 }
 
 function Get-CurrentStory {
@@ -141,15 +139,31 @@ function Get-CurrentStory {
     }
 }
 
-# Build CLI args for Copilot/Gemini/Qwen style CLIs
+# Build CLI args for Copilot/Gemini/Qwen style CLIs. Accepts optional Tool to add tool-specific flags (e.g., Copilot).
 function Build-CliArgs {
     param(
-        [Parameter(Mandatory=$true)][string]$Prompt
+        [Parameter(Mandatory = $true)][string]$Prompt,
+        [Parameter(Mandatory = $false)][string]$Tool
     )
-    $args = @('-p', $Prompt)
-    if ($Model) { $args += "--model=$Model" }
-    if ($Yolo -and ($Model -in @('Gemini','Qwen','Copilot'))) { $args += '--yolo' }
-    return $args
+
+    $cliArgs = @()
+
+    if ($Model) {
+        $cliArgs += "--model=$Model"
+    }
+
+    if ($Yolo -and ($Tool -in @('Gemini', 'Qwen', 'Copilot'))) {
+        $cliArgs += '--yolo'
+    }
+
+    if ($Tool -eq 'Copilot') {
+        $cliArgs += '--allow-all-tools'
+    }
+
+    # Prompt must always be the last argument
+    $cliArgs += @('-p', $Prompt)
+
+    return $cliArgs
 }
 
 # Invoke a native CLI tool using the call operator (&). Handles OpenCode specially.
@@ -169,6 +183,11 @@ function Invoke-CodingTool {
     }
 
     if ($Tool -eq 'OpenCode') {
+        # Log invocation details (prompt length to avoid printing huge content)
+        $promptLength = if ($null -ne $Prompt) { $Prompt.Length } else { 0 }
+        Write-Host "[Invoke] $exe run (prompt length: $promptLength chars)" -ForegroundColor Magenta
+        Write-Log "[Invoke] $exe run (prompt length: $promptLength chars)"
+
         $output = & $exe run $Prompt 2>&1
         $exitCode = $LASTEXITCODE
         # Write each output line to host and progress log for traceability
@@ -182,9 +201,21 @@ function Invoke-CodingTool {
         }
         return ,$output
     } else {
-        $args = Build-CliArgs -Prompt $Prompt
+        $cliArgs = Build-CliArgs -Prompt $Prompt -Tool $Tool
+        
+
+        # Verify -p exists and log the parameter set we're about to send
+        if (-not ($cliArgs -contains '-p')) {
+            Write-Warning "Parameter '-p' not found in args for $Tool; this may cause the prompt to be ignored. Args: $($cliArgs -join ' ')"
+            Write-Log "WARNING: Parameter '-p' not found in args for $Tool; Args: $($cliArgs -join ' ')"
+        }
+
+        $argDisplay = ($cliArgs -join ' ')
+        Write-Host "[Invoke] $exe $argDisplay" -ForegroundColor Magenta
+        Write-Log "[Invoke] $exe $argDisplay"
+
         # Use the call operator to invoke the native CLI with the assembled args
-        $output = & $exe @args 2>&1
+        $output = & $exe @cliArgs 2>&1
         foreach ($line in $output) {
             if ($line -ne '') { Write-Host "[$Tool] $line" -ForegroundColor Cyan }
             Write-Log "[$Tool] $line"
