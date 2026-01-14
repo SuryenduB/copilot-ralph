@@ -1,4 +1,4 @@
-<
+<#
 .SYNOPSIS
     Ralph for GitHub Copilot CLI
     Autonomous AI agent loop that runs Copilot CLI until all PRD items are complete.
@@ -10,13 +10,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
 
-$ScriptDir       = $PSScriptRoot
-$PrdFile         = 'prd.json'
-$ProgressFile    = 'progress.txt'
-$ArchiveDir      = 'archive'
-$LastBranchFile  = '.ralph-last-branch'
-$PromptFile      = Join-Path $ScriptDir 'prompt.md'
+$ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } elseif ($MyInvocation.MyCommand.Path) { Split-Path -Parent $MyInvocation.MyCommand.Path } else { (Get-Location).Path }
+$PrdFile = Join-Path $ScriptDir 'prd.json'
+$ProgressFile = Join-Path $ScriptDir 'progress.txt'
+$ArchiveDir = Join-Path $ScriptDir 'archive'
+$LastBranchFile = Join-Path $ScriptDir '.ralph-last-branch'
+$PromptFile = Join-Path $ScriptDir 'prompt.md' 
 
 # --- Preconditions ---
 if (-not (Get-Command copilot -ErrorAction SilentlyContinue)) {
@@ -33,29 +34,39 @@ if (-not (Test-Path $PromptFile)) {
 
 # --- Helpers ---
 function Read-Prd {
-    Get-Content $PrdFile -Raw | ConvertFrom-Json
-}
+    try {
+        Get-Content $PrdFile -Raw | ConvertFrom-Json
+    } catch {
+        throw ('Failed to parse ' + $PrdFile + ': ' + $_.Exception.Message)
+    }
+} 
 
-function Write-Progress([string]$Line) {
+function Write-Log([string]$Line) {
     $timestamp = (Get-Date).ToString('u')
     "$timestamp $Line" | Out-File $ProgressFile -Append -Encoding UTF8
-}
+} 
 
 function Get-IncompleteStories {
     $prd = Read-Prd
-    $prd.userStories |
+    if (-not $prd -or -not $prd.userStories) { return @() }
+    @($prd.userStories) |
         Where-Object { $_.passes -ne $true } |
-        Sort-Object @{ Expression = { if ($_.priority) { $_.priority } else { 999 } } }, id
-}
+        Sort-Object @{ Expression = { if ($null -ne $_.priority) { $_.priority } else { 999 } } }, id
+} 
 
 function Count-Remaining {
     (Get-IncompleteStories).Count
 }
 
 function Get-CurrentStory {
-    $stories = Get-IncompleteStories
+    $stories = @((Get-IncompleteStories))
     if ($stories.Count -gt 0) {
-        "$($stories[0].id): $($stories[0].title)"
+        $s = $stories[0]
+        if ($null -ne $s.id -or $null -ne $s.title) {
+            "$($s.id): $($s.title)"
+        } else {
+            'unknown'
+        }
     } else {
         'none'
     }
@@ -77,10 +88,11 @@ if (Test-Path $LastBranchFile) {
             Copy-Item $PrdFile $target -Force -ErrorAction SilentlyContinue
             Copy-Item $ProgressFile $target -Force -ErrorAction SilentlyContinue
 
-            @"# Ralph Progress Log
-Started: $(Get-Date)
----
-"@ | Out-File $ProgressFile -Encoding UTF8
+            @(
+                '# Ralph Progress Log'
+                "Started: $(Get-Date)"
+                '---'
+            ) | Out-File $ProgressFile -Encoding UTF8
         }
     } catch {}
 }
@@ -95,11 +107,12 @@ try {
 
 # Initialize progress file
 if (-not (Test-Path $ProgressFile)) {
-@"# Ralph Progress Log
-Started: $(Get-Date)
----
-"@ | Out-File $ProgressFile -Encoding UTF8
-}
+    @(
+        '# Ralph Progress Log'
+        "Started: $(Get-Date)"
+        '---'
+    ) | Out-File $ProgressFile -Encoding UTF8
+} 
 
 Write-Host "Ralph for GitHub Copilot CLI" -ForegroundColor Cyan
 Write-Host "Max iterations: $MaxIterations" -ForegroundColor Yellow
@@ -110,7 +123,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
 
     $remaining = Count-Remaining
     if ($remaining -eq 0) {
-        Write-Progress 'All stories completed.'
+        Write-Log 'All stories completed.'
         exit 0
     }
 
@@ -118,7 +131,7 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
     Write-Host "Iteration $i / $MaxIterations" -ForegroundColor Blue
     Write-Host "Current: $currentStory" -ForegroundColor Cyan
 
-    Write-Progress "Iteration $i START | Remaining=$remaining | Story=$currentStory"
+    Write-Log "Iteration $i START | Remaining=$remaining | Story=$currentStory"
 
     $prompt = Get-Content $PromptFile -Raw
 
@@ -129,17 +142,17 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         $outStr = $_.Exception.Message
     }
 
-    Write-Progress "Iteration $i OUTPUT"
-    Write-Progress $outStr
+    Write-Log "Iteration $i OUTPUT"
+    Write-Log $outStr
 
     if ($outStr -match '<promise>COMPLETE</promise>') {
-        Write-Progress 'Completion signal received.'
+        Write-Log 'Completion signal received.'
         exit 0
     }
 
-    Write-Progress "Iteration $i END"
+    Write-Log "Iteration $i END"
     Start-Sleep -Seconds 2
 }
 
-Write-Progress "Max iterations reached ($MaxIterations)."
+Write-Log "Max iterations reached ($MaxIterations)."
 exit 1
